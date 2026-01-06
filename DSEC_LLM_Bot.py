@@ -25,7 +25,7 @@ def find_shared_folder(service, folder_name):
     if not items:
         return None
     return items[0]['id']
-
+'''
 def upload_to_drive(filename, text_content, folder_name):
     """Finds the folder by name and uploads the file."""
     service = get_drive_service()
@@ -54,7 +54,35 @@ def upload_to_drive(filename, text_content, folder_name):
     ).execute()
     
     return file.get('id'), file.get('name')
+'''
+def upload_to_drive(filename, text_content, folder_id):
+    """
+    Uploads the file directly into a folder OWNED by you.
+    This bypasses the 403 Service Account Quota error.
+    """
+    service = get_drive_service()
+    
+    # 1. Define the file metadata and tell it who its parent is
+    file_metadata = {
+        'name': filename,
+        'mimeType': 'text/plain',
+        'parents': [folder_id] # This is the Folder ID from Step 3
+    }
+    
+    # 2. Convert text to bytes for upload
+    fh = io.BytesIO(text_content.encode('utf-8'))
+    media = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
 
+    # 3. Create the file
+    try:
+        file = service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields='id, name'
+        ).execute()
+        return file.get('id'), file.get('name')
+    except Exception as e:
+        raise e
 # --- 2. PragyanAI App Interface ---
 
 st.set_page_config(page_title="PragyanAI Marketing Gen", layout="wide")
