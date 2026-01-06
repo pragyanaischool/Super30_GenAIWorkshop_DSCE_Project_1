@@ -5,116 +5,169 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
 
-# --- 1. Google Drive Helper Functions ---
+# -------------------------------------------------
+# 1. GOOGLE DRIVE HELPERS (SHARED DRIVE SAFE)
+# -------------------------------------------------
 
 def get_drive_service():
-    """Authenticates using Streamlit Secrets."""
     creds_info = st.secrets["gcp_service_account"]
     creds = service_account.Credentials.from_service_account_info(
-        creds_info, 
-        scopes=['https://www.googleapis.com/auth/drive']
+        creds_info,
+        scopes=["https://www.googleapis.com/auth/drive"]
     )
-    return build('drive', 'v3', credentials=creds)
+    return build("drive", "v3", credentials=creds)
+
 
 def find_folder_id(service, folder_name):
-    """Looks up the unique ID for the folder name provided."""
-    query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    items = results.get('files', [])
-    
-    if not items:
+    query = (
+        f"name = '{folder_name}' "
+        "and mimeType = 'application/vnd.google-apps.folder' "
+        "and trashed = false"
+    )
+
+    response = service.files().list(
+        q=query,
+        corpora="allDrives",
+        includeItemsFromAllDrives=True,
+        supportsAllDrives=True,
+        fields="files(id, name, driveId)"
+    ).execute()
+
+    folders = response.get("files", [])
+    if not folders:
         return None
-    return items[0]['id']
+
+    return folders[0]["id"]
+
 
 def upload_to_drive(filename, text_content, folder_name):
-    """Finds 'Drive_Connect' and uploads file using your storage quota."""
     service = get_drive_service()
-    
-    # 1. Get the ID for 'Drive_Connect'
+
     folder_id = find_folder_id(service, folder_name)
-    
     if not folder_id:
-        raise Exception(f"Folder '{folder_name}' not found. Did you share it with the service account email?")
+        raise Exception(
+            f"Folder '{folder_name}' not found in Shared Drive. "
+            "Ensure it exists and is shared with the service account."
+        )
 
-    # 2. Set metadata specifying your folder as the 'Parent'
-    # This is what moves the 'storage cost' from the bot to your account
     file_metadata = {
-        'name': filename,
-        'mimeType': 'text/plain',
-        'parents': [folder_id] 
+        "name": filename,
+        "parents": [folder_id],
+        "mimeType": "text/plain"
     }
-    
-    # 3. Stream the content
-    fh = io.BytesIO(text_content.encode('utf-8'))
-    media = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
 
-    # 4. Create the file
+    fh = io.BytesIO(text_content.encode("utf-8"))
+    media = MediaIoBaseUpload(fh, mimetype="text/plain", resumable=True)
+
     file = service.files().create(
         body=file_metadata,
         media_body=media,
-        fields='id, name'
+        fields="id, name",
+        supportsAllDrives=True
     ).execute()
-    
-    return file.get('id'), file.get('name')
 
-# --- 2. PragyanAI App Interface ---
+    return file["id"], file["name"]
 
-st.set_page_config(page_title="PragyanAI Marketing Gen", layout="wide")
+# -------------------------------------------------
+# 2. STREAMLIT APP UI
+# -------------------------------------------------
 
-# Credential Check
+st.set_page_config(
+    page_title="PragyanAI Marketing Generator",
+    layout="wide"
+)
+
+# Validate secrets
 if "GROQ_API_KEY" not in st.secrets or "gcp_service_account" not in st.secrets:
-    st.error("Missing keys in Streamlit Secrets!")
+    st.error("❌ Missing GROQ or Google Service Account credentials")
     st.stop()
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 sa_email = st.secrets["gcp_service_account"]["client_email"]
 
-st.title("📢 PragyanAI: Content Generator")
+st.title("📢 PragyanAI – AI Marketing Content Generator")
 
-# Sidebar
+# -------------------------------------------------
+# SIDEBAR
+# -------------------------------------------------
+
 with st.sidebar:
-    st.header("Drive Configuration")
-    st.info(f"**Target Email:** pragyan.ai.school@gmail.com")
-    st.write("Ensure your folder is shared with:")
-    st.code(sa_email)
-    
-    st.divider()
-    target_folder = st.text_input("Folder Name", value="Drive_Connect")
-    target_filename = st.text_input("Filename", value="marketing_copy.txt")
+    st.header("🔐 Google Drive Config")
+    st.info("Using **Shared Drive (Quota Safe)**")
 
-# UI Layout
-col1, col2 = st.columns([1, 1])
+    st.write("Service Account Email:")
+    st.code(sa_email)
+
+    st.divider()
+    target_folder = st.text_input(
+        "Target Folder Name",
+        value="Drive_Connect"
+    )
+    target_filename = st.text_input(
+        "Output File Name",
+        value="marketing_copy.txt"
+    )
+
+# -------------------------------------------------
+# MAIN UI
+# -------------------------------------------------
+
+col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("Generate Content")
-    product = st.text_input("Product Name")
+    st.subheader("✍️ Generate Marketing Content")
+
+    product = st.text_input("Product / Program Name")
     audience = st.text_input("Target Audience")
-    
-    if st.button("Generate Strategy"):
-        if product and audience:
-            prompt = f"Create marketing content for {product} targeting {audience}."
-            with st.spinner("AI is thinking..."):
+
+    if st.button("⚡ Generate Content"):
+        if not product or not audience:
+            st.warning("Please fill in all fields.")
+        else:
+            prompt = f"""
+            Create high-conversion marketing content for:
+            Product: {product}
+            Target Audience: {audience}
+
+            Include:
+            - Clear value proposition
+            - 3 key benefits
+            - Strong CTA
+            """
+
+            with st.spinner("AI is generating content..."):
                 response = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[{"role": "user", "content": prompt}]
                 )
-                st.session_state.gen_text = response.choices[0].message.content
-        else:
-            st.warning("Fill in the details above.")
+
+                st.session_state.generated_text = (
+                    response.choices[0].message.content
+                )
 
 with col2:
-    st.subheader("Preview & Export")
-    if 'gen_text' in st.session_state:
-        output_text = st.text_area("Generated Output", st.session_state.gen_text, height=300)
-        
+    st.subheader("📤 Preview & Upload")
+
+    if "generated_text" in st.session_state:
+        output_text = st.text_area(
+            "Generated Content",
+            st.session_state.generated_text,
+            height=320
+        )
+
         if st.button("🚀 Upload to Google Drive"):
-            try:
-                with st.spinner(f"Uploading to '{target_folder}'..."):
-                    f_id, f_name = upload_to_drive(target_filename, output_text, target_folder)
-                    st.success(f"✅ Success! File uploaded to your Drive.")
+            with st.spinner("Uploading to Shared Drive..."):
+                try:
+                    file_id, file_name = upload_to_drive(
+                        target_filename,
+                        output_text,
+                        target_folder
+                    )
+                    st.success("✅ File uploaded successfully!")
+                    st.write("File Name:", file_name)
                     st.balloons()
-            except Exception as e:
-                st.error(f"Error: {e}")
+                except Exception as e:
+                    st.error(str(e))
     else:
-        st.info("Generate content on the left first.")
-        
+        st.info("Generate content first to preview and upload.")
+
