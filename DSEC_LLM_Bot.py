@@ -142,4 +142,20 @@ with col2:
             height=320
         )
 
-        filename = st.te
+        filename = st.text_input(
+            "File Name",
+            value="marketing_copy.txt"
+        )
+
+        if st.button("🚀 Upload to Google Drive"):
+            with st.spinner("Uploading to Shared Drive..."):
+                try:
+                    fid, fname = upload_text_file(filename, edited_text)
+                    st.success("✅ Uploaded Successfully")
+                    st.write("File:", fname)
+                    st.balloons()
+                except Exception as e:
+                    st.error(str(e))
+    else:
+        st.info("Generate content first")
+
