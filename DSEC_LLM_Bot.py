@@ -90,11 +90,14 @@ if st.button("Generate Content"):
     st.subheader("✨ Generated Content")
     st.write(generated_text)
 
-if generated_text and st.button("📁 Export to Google Drive"):
-    file_id = upload_to_drive(
-        filename="Marketing_Content_Generated.txt",
-        content=generated_text
-    )
-
-    st.success("✅ File uploaded to your Google Drive")
-    st.write("File ID:", file_id)
+file_name = st.text_input(
+    "Enter file name to save in Google Drive",
+    value="generated_content.txt"
+)
+if st.button("Upload to Google Drive"):
+    if not file_name.strip():
+        st.error("❌ Please enter a valid file name")
+    else:
+        file_id, name = upload_to_drive(file_name, generated_text)
+        st.success(f"✅ File '{name}' uploaded successfully!")
+        st.write("Drive File ID:", file_id)
