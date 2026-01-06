@@ -1,111 +1,123 @@
 import streamlit as st
 from groq import Groq
-from google.oauth2 import service_account
+import io
+import json
+
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
-import io
+from google.oauth2.credentials import Credentials
 
-# =================================================
-# CONFIG (DO NOT CHANGE UNLESS DRIVE NAME CHANGES)
-# =================================================
-SHARED_DRIVE_NAME = "PragyanAI_Automations"
-TARGET_FOLDER_NAME = "Drive_Connect"
+# -------------------------------------------------
+# CONFIG
+# -------------------------------------------------
 
-# =================================================
-# GOOGLE DRIVE HELPERS (SHARED DRIVE ONLY)
-# =================================================
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+REDIRECT_URI = st.secrets.get("redirect_uri", None)
+
+# -------------------------------------------------
+# GOOGLE OAUTH HELPERS
+# -------------------------------------------------
+
+def get_oauth_flow():
+    client_config = {
+        "web": {
+            "client_id": st.secrets["google_oauth"]["client_id"],
+            "client_secret": st.secrets["google_oauth"]["client_secret"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [st.get_url()]
+        }
+    }
+
+    return Flow.from_client_config(
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=st.get_url()
+    )
+
 
 def get_drive_service():
-    creds = service_account.Credentials.from_service_account_info(
-        st.secrets["gcp_service_account"],
-        scopes=["https://www.googleapis.com/auth/drive"]
-    )
+    creds = Credentials(**st.session_state["google_creds"])
     return build("drive", "v3", credentials=creds)
 
 
-def get_shared_drive_id(service):
-    drives = service.drives().list().execute().get("drives", [])
-    for drive in drives:
-        if drive["name"] == SHARED_DRIVE_NAME:
-            return drive["id"]
-    return None
-
-
-def get_folder_id(service, drive_id):
-    query = (
-        f"name = '{TARGET_FOLDER_NAME}' "
-        "and mimeType = 'application/vnd.google-apps.folder' "
-        "and trashed = false"
-    )
-
-    result = service.files().list(
-        q=query,
-        corpora="drive",
-        driveId=drive_id,
-        supportsAllDrives=True,
-        includeItemsFromAllDrives=True,
-        fields="files(id, name)"
-    ).execute()
-
-    folders = result.get("files", [])
-    if not folders:
-        return None
-    return folders[0]["id"]
-
-
-def upload_text_file(filename, content):
+def upload_file_to_drive(filename, content):
     service = get_drive_service()
 
-    drive_id = get_shared_drive_id(service)
-    if not drive_id:
-        raise Exception("❌ Shared Drive not found")
-
-    folder_id = get_folder_id(service, drive_id)
-    if not folder_id:
-        raise Exception("❌ Folder not found inside Shared Drive")
-
-    metadata = {
-        "name": filename,
-        "parents": [folder_id]
-    }
-
+    metadata = {"name": filename}
     buffer = io.BytesIO(content.encode("utf-8"))
     media = MediaIoBaseUpload(buffer, mimetype="text/plain", resumable=True)
 
     file = service.files().create(
         body=metadata,
         media_body=media,
-        supportsAllDrives=True,
         fields="id, name"
     ).execute()
 
     return file["id"], file["name"]
 
-# =================================================
-# STREAMLIT UI
-# =================================================
+# -------------------------------------------------
+# STREAMLIT APP
+# -------------------------------------------------
 
 st.set_page_config("PragyanAI Marketing Generator", layout="wide")
 
-if "GROQ_API_KEY" not in st.secrets:
-    st.error("Missing GROQ API Key")
-    st.stop()
+st.title("📢 PragyanAI – Marketing Content Generator")
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-st.title("📢 PragyanAI – Marketing Content Generator")
+# -------------------------------------------------
+# OAUTH LOGIN FLOW
+# -------------------------------------------------
+
+if "google_creds" not in st.session_state:
+    flow = get_oauth_flow()
+    auth_url, _ = flow.authorization_url(
+        prompt="consent",
+        access_type="offline",
+        include_granted_scopes="true"
+    )
+
+    st.info("🔐 Login required to upload to your Google Drive")
+    st.link_button("🔑 Login with Google", auth_url)
+
+    # Handle OAuth redirect
+    query_params = st.query_params
+    if "code" in query_params:
+        flow.fetch_token(code=query_params["code"])
+        creds = flow.credentials
+        st.session_state["google_creds"] = {
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes
+        }
+        st.experimental_rerun()
+
+    st.stop()
+
+# -------------------------------------------------
+# SIDEBAR
+# -------------------------------------------------
 
 with st.sidebar:
-    st.header("🔐 Google Drive Status")
-    st.success("Shared Drive Mode (Quota Safe)")
-    st.write("Shared Drive:", SHARED_DRIVE_NAME)
-    st.write("Folder:", TARGET_FOLDER_NAME)
-    st.code(st.secrets["gcp_service_account"]["client_email"])
+    st.success("✅ Logged in with Google")
+    if st.button("🚪 Logout"):
+        st.session_state.clear()
+        st.experimental_rerun()
+
+# -------------------------------------------------
+# MAIN UI
+# -------------------------------------------------
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.subheader("✍️ Generate Content")
+    st.subheader("✍️ Generate Marketing Content")
+
     product = st.text_input("Product / Program Name")
     audience = st.text_input("Target Audience")
 
@@ -121,7 +133,7 @@ with col1:
 
             Include:
             - Clear value proposition
-            - 3 bullet benefits
+            - 3 key benefits
             - Strong CTA
             """
 
@@ -133,7 +145,7 @@ with col1:
                 st.session_state.text = response.choices[0].message.content
 
 with col2:
-    st.subheader("📤 Preview & Upload")
+    st.subheader("📤 Upload to Google Drive")
 
     if "text" in st.session_state:
         edited_text = st.text_area(
@@ -147,10 +159,10 @@ with col2:
             value="marketing_copy.txt"
         )
 
-        if st.button("🚀 Upload to Google Drive"):
-            with st.spinner("Uploading to Shared Drive..."):
+        if st.button("🚀 Upload to Drive"):
+            with st.spinner("Uploading..."):
                 try:
-                    fid, fname = upload_text_file(filename, edited_text)
+                    fid, fname = upload_file_to_drive(filename, edited_text)
                     st.success("✅ Uploaded Successfully")
                     st.write("File:", fname)
                     st.balloons()
@@ -158,4 +170,5 @@ with col2:
                     st.error(str(e))
     else:
         st.info("Generate content first")
+
 
