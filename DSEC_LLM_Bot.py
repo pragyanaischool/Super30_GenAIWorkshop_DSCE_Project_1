@@ -17,7 +17,7 @@ def get_drive_service():
     return build('drive', 'v3', credentials=creds)
 
 def find_shared_folder(service, folder_name):
-    """Searches for a folder by name that has been shared with the service account."""
+    """Searches for a folder by name shared with the service account."""
     query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     items = results.get('files', [])
@@ -25,28 +25,29 @@ def find_shared_folder(service, folder_name):
     if not items:
         return None
     return items[0]['id']
-'''
+
 def upload_to_drive(filename, text_content, folder_name):
-    """Finds the folder by name and uploads the file."""
+    """Finds the folder by name and uploads the file using the shared ID."""
     service = get_drive_service()
     
-    # 1. Find the Folder ID based on the name provided
+    # 1. Look up the ID for the Folder Name provided
     folder_id = find_shared_folder(service, folder_name)
     
     if not folder_id:
-        raise Exception(f"Folder '{folder_name}' not found. Ensure you created it and shared it with the service account email.")
+        raise Exception(f"Folder '{folder_name}' not found. Did you share it with the service account email as 'Editor'?")
 
-    # 2. Prepare File Metadata
+    # 2. Prepare File Metadata (using folder_id as the parent)
     file_metadata = {
         'name': filename,
         'mimeType': 'text/plain',
         'parents': [folder_id]
     }
     
-    # 3. Upload
+    # 3. Convert text content to byte stream
     fh = io.BytesIO(text_content.encode('utf-8'))
     media = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
 
+    # 4. Upload to the folder
     file = service.files().create(
         body=file_metadata,
         media_body=media,
@@ -54,35 +55,7 @@ def upload_to_drive(filename, text_content, folder_name):
     ).execute()
     
     return file.get('id'), file.get('name')
-'''
-def upload_to_drive(filename, text_content, folder_id):
-    """
-    Uploads the file directly into a folder OWNED by you.
-    This bypasses the 403 Service Account Quota error.
-    """
-    service = get_drive_service()
-    
-    # 1. Define the file metadata and tell it who its parent is
-    file_metadata = {
-        'name': filename,
-        'mimeType': 'text/plain',
-        'parents': [folder_id] # This is the Folder ID from Step 3
-    }
-    
-    # 2. Convert text to bytes for upload
-    fh = io.BytesIO(text_content.encode('utf-8'))
-    media = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
 
-    # 3. Create the file
-    try:
-        file = service.files().create(
-            body=file_metadata,
-            media_body=media,
-            fields='id, name'
-        ).execute()
-        return file.get('id'), file.get('name')
-    except Exception as e:
-        raise e
 # --- 2. PragyanAI App Interface ---
 
 st.set_page_config(page_title="PragyanAI Marketing Gen", layout="wide")
@@ -100,13 +73,14 @@ st.title("📢 PragyanAI: Content Generator & Drive Exporter")
 
 # Sidebar for Settings
 with st.sidebar:
-    st.header("Settings")
-    st.markdown(f"**Admin Email:** \n`{sa_email}`")
-    st.caption("⚠️ Share your Google Drive folder with the email above as 'Editor'.")
+    st.header("Drive Configuration")
+    st.markdown(f"**1. Copy Service Email:**")
+    st.code(sa_email, language=None)
+    st.caption("⚠️ Share your folder with this email as an **Editor** in Google Drive.")
     
     st.divider()
     
-    # Inputs for Folder and File names
+    st.markdown("**2. Folder Settings**")
     target_folder = st.text_input("Drive Folder Name", value="PragyanAI_Uploads")
     target_filename = st.text_input("Save As (Filename)", value="marketing_copy.txt")
 
@@ -115,8 +89,8 @@ col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("Generate Content")
-    product = st.text_input("Product Name")
-    audience = st.text_input("Target Audience")
+    product = st.text_input("Product Name", placeholder="e.g. PragyanAI Course")
+    audience = st.text_input("Target Audience", placeholder="e.g. B.Tech Students")
     tone = st.selectbox("Tone", ["Professional", "Casual", "Exciting", "Urgent"])
 
     if st.button("Generate Strategy"):
@@ -129,7 +103,7 @@ with col1:
                 )
                 st.session_state.gen_text = response.choices[0].message.content
         else:
-            st.warning("Please fill in the details first.")
+            st.warning("Please fill in the product and audience fields.")
 
 with col2:
     st.subheader("Preview & Export")
@@ -138,13 +112,17 @@ with col2:
         
         if st.button("🚀 Upload to Google Drive"):
             try:
-                with st.spinner(f"Looking for folder '{target_folder}'..."):
+                with st.spinner(f"Connecting to '{target_folder}'..."):
                     f_id, f_name = upload_to_drive(target_filename, output_text, target_folder)
                     st.success(f"✅ Uploaded Successfully to {target_folder}!")
                     st.balloons()
             except Exception as e:
-                st.error(f"Error: {e}")
-                st.info("Make sure the folder name matches exactly and is shared with the service account.")
+                # Specific error handling for clarity
+                if "not found" in str(e).lower():
+                    st.error(f"Folder Not Found: '{target_folder}'")
+                    st.info(f"Make sure you created a folder named '{target_folder}' in your Drive and shared it with the Admin Email in the sidebar.")
+                else:
+                    st.error(f"Error: {e}")
     else:
         st.info("Generate content on the left to see the preview here.")
         
