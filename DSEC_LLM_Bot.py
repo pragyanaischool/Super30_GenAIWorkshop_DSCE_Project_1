@@ -17,7 +17,7 @@ def get_drive_service():
     return build('drive', 'v3', credentials=creds)
 
 def find_folder_id(service, folder_name):
-    """Searches for the Folder ID by its name."""
+    """Looks up the unique ID for the folder name provided."""
     query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     results = service.files().list(q=query, fields="files(id, name)").execute()
     items = results.get('files', [])
@@ -27,16 +27,17 @@ def find_folder_id(service, folder_name):
     return items[0]['id']
 
 def upload_to_drive(filename, text_content, folder_name):
-    """Finds folder ID and uploads file into YOUR storage space."""
+    """Finds 'Drive_Connect' and uploads file using your storage quota."""
     service = get_drive_service()
     
-    # 1. Look up the ID for "Drive_Connect"
+    # 1. Get the ID for 'Drive_Connect'
     folder_id = find_folder_id(service, folder_name)
     
     if not folder_id:
-        raise Exception(f"Folder '{folder_name}' not found. Did you share it with the service account?")
+        raise Exception(f"Folder '{folder_name}' not found. Did you share it with the service account email?")
 
-    # 2. Set metadata. Specifying the 'parents' is what fixes the 403 error.
+    # 2. Set metadata specifying your folder as the 'Parent'
+    # This is what moves the 'storage cost' from the bot to your account
     file_metadata = {
         'name': filename,
         'mimeType': 'text/plain',
@@ -47,7 +48,7 @@ def upload_to_drive(filename, text_content, folder_name):
     fh = io.BytesIO(text_content.encode('utf-8'))
     media = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
 
-    # 4. Upload
+    # 4. Create the file
     file = service.files().create(
         body=file_metadata,
         media_body=media,
@@ -60,41 +61,38 @@ def upload_to_drive(filename, text_content, folder_name):
 
 st.set_page_config(page_title="PragyanAI Marketing Gen", layout="wide")
 
-# Ensure keys are present
+# Credential Check
 if "GROQ_API_KEY" not in st.secrets or "gcp_service_account" not in st.secrets:
-    st.error("Missing API keys in Streamlit Secrets!")
+    st.error("Missing keys in Streamlit Secrets!")
     st.stop()
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 sa_email = st.secrets["gcp_service_account"]["client_email"]
 
-st.title("📢 PragyanAI: Content Generator & Drive Exporter")
+st.title("📢 PragyanAI: Content Generator")
 
-# Sidebar for Settings
+# Sidebar
 with st.sidebar:
-    st.header("Drive Settings")
-    st.write("**Mandatory Step:**")
-    st.write(f"1. Go to your Google Drive folder **Drive_Connect**.")
-    st.write(f"2. Click 'Share' and add this email as **Editor**:")
+    st.header("Drive Configuration")
+    st.info(f"**Target Email:** pragyan.ai.school@gmail.com")
+    st.write("Ensure your folder is shared with:")
     st.code(sa_email)
     
     st.divider()
-    
-    target_folder = st.text_input("Drive Folder Name", value="Drive_Connect")
-    target_filename = st.text_input("Save As (Filename)", value="marketing_copy.txt")
+    target_folder = st.text_input("Folder Name", value="Drive_Connect")
+    target_filename = st.text_input("Filename", value="marketing_copy.txt")
 
-# Main UI
+# UI Layout
 col1, col2 = st.columns([1, 1])
 
 with col1:
     st.subheader("Generate Content")
     product = st.text_input("Product Name")
     audience = st.text_input("Target Audience")
-    tone = st.selectbox("Tone", ["Professional", "Casual", "Exciting", "Urgent"])
-
+    
     if st.button("Generate Strategy"):
         if product and audience:
-            prompt = f"Create marketing content for {product} targeting {audience} in a {tone} tone."
+            prompt = f"Create marketing content for {product} targeting {audience}."
             with st.spinner("AI is thinking..."):
                 response = client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
@@ -102,7 +100,7 @@ with col1:
                 )
                 st.session_state.gen_text = response.choices[0].message.content
         else:
-            st.warning("Enter product and audience.")
+            st.warning("Fill in the details above.")
 
 with col2:
     st.subheader("Preview & Export")
@@ -113,7 +111,7 @@ with col2:
             try:
                 with st.spinner(f"Uploading to '{target_folder}'..."):
                     f_id, f_name = upload_to_drive(target_filename, output_text, target_folder)
-                    st.success(f"✅ Successfully uploaded to Drive_Connect!")
+                    st.success(f"✅ Success! File uploaded to your Drive.")
                     st.balloons()
             except Exception as e:
                 st.error(f"Error: {e}")
