@@ -26,15 +26,18 @@ def get_oauth_flow():
             "client_secret": st.secrets["google_oauth"]["client_secret"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [st.get_url()]
+            "redirect_uris": [
+                st.secrets["google_oauth"]["redirect_uri"]
+            ],
         }
     }
 
     return Flow.from_client_config(
-        client_config,
-        scopes=SCOPES,
-        redirect_uri=st.get_url()
+        client_config=client_config,
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+        redirect_uri=st.secrets["google_oauth"]["redirect_uri"],
     )
+
 
 
 def get_drive_service():
