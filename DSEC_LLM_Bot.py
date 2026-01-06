@@ -1,18 +1,15 @@
 import streamlit as st
-from groq import Groq
 import io
-import json
-
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from google.oauth2.credentials import Credentials
 
-# -------------------------------------------------
-# GOOGLE OAUTH HELPERS
-# -------------------------------------------------
+# 1. Define the permissions your app needs
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
 def get_oauth_flow():
+    """Configures the OAuth flow using secrets."""
     client_config = {
         "web": {
             "client_id": st.secrets["google_oauth"]["client_id"],
@@ -21,58 +18,40 @@ def get_oauth_flow():
             "token_uri": "https://oauth2.googleapis.com/token",
         }
     }
-
     return Flow.from_client_config(
-        client_config=client_config,
-        scopes=["https://www.googleapis.com/auth/drive.file"],
-        # Ensure this matches Google Cloud Console EXACTLY
-        redirect_uri=st.secrets["google_oauth"]["redirect_uri"],
+        client_config,
+        scopes=SCOPES,
+        redirect_uri=st.secrets["google_oauth"]["redirect_uri"]
     )
 
-def get_drive_service():
-    creds = Credentials(**st.session_state["google_creds"])
-    return build("drive", "v3", credentials=creds)
-
-def upload_file_to_drive(filename, content):
-    service = get_drive_service()
-    metadata = {"name": filename}
-    buffer = io.BytesIO(content.encode("utf-8"))
-    media = MediaIoBaseUpload(buffer, mimetype="text/plain", resumable=True)
-
+def upload_to_drive(creds, filename, content):
+    """Uploads a simple text file to the user's Drive."""
+    service = build('drive', 'v3', credentials=creds)
+    file_metadata = {'name': filename}
+    
+    media_content = io.BytesIO(content.encode('utf-8'))
+    media = MediaIoBaseUpload(media_content, mimetype='text/plain', resumable=True)
+    
     file = service.files().create(
-        body=metadata,
+        body=file_metadata,
         media_body=media,
-        fields="id, name"
+        fields='id'
     ).execute()
+    return file.get('id')
 
-    return file["id"], file["name"]
+# --- STREAMLIT UI ---
+st.title("🔑 PragyanAI: Sign in to Export")
 
-# -------------------------------------------------
-# STREAMLIT APP
-# -------------------------------------------------
-
-st.set_page_config("PragyanAI Marketing Generator", layout="wide")
-st.title("📢 PragyanAI – Drive Exporter")
-
-if "GROQ_API_KEY" not in st.secrets:
-    st.error("Missing GROQ_API_KEY in secrets!")
-    st.stop()
-
-client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-# -------------------------------------------------
-# OAUTH LOGIN FLOW
-# -------------------------------------------------
-
+# Check if user is already logged in
 if "google_creds" not in st.session_state:
     flow = get_oauth_flow()
     
-    # 1. Check for the 'code' in URL after redirect
+    # Handle the redirect from Google
     if "code" in st.query_params:
-        code = st.query_params["code"]
-        flow.fetch_token(code=code)
+        flow.fetch_token(code=st.query_params["code"])
         creds = flow.credentials
-        st.session_state["google_creds"] = {
+        # Save credentials in session state
+        st.session_state.google_creds = {
             "token": creds.token,
             "refresh_token": creds.refresh_token,
             "token_uri": creds.token_uri,
@@ -80,55 +59,33 @@ if "google_creds" not in st.session_state:
             "client_secret": creds.client_secret,
             "scopes": creds.scopes
         }
-        # Clear the code from URL and refresh app
         st.query_params.clear()
         st.rerun()
 
-    # 2. Show Login Button if not authenticated
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
-    st.info("🔐 Access to Google Drive is required.")
-    st.link_button("🔑 Sign in with Google", auth_url)
+    # If no code in URL, show the Login Button
+    auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
+    st.info("Log in to authorize Drive access.")
+    st.link_button("🔵 Sign in with Google", auth_url)
     st.stop()
 
-# -------------------------------------------------
-# MAIN APP (LOGGED IN)
-# -------------------------------------------------
+# --- IF LOGGED IN ---
+creds = Credentials(**st.session_state.google_creds)
 
 with st.sidebar:
-    st.success("✅ Logged in")
-    if st.button("🚪 Logout"):
-        st.session_state.clear()
+    st.success("Connected to Google")
+    if st.button("Logout"):
+        del st.session_state.google_creds
         st.rerun()
 
-col1, col2 = st.columns(2)
+st.subheader("Create & Upload Content")
+file_name = st.text_input("Filename", value="my_content.txt")
+text_data = st.text_area("Content to save in Drive")
 
-with col1:
-    st.subheader("✍️ Content Creation")
-    product = st.text_input("Product Name")
-    audience = st.text_input("Target Audience")
-
-    if st.button("Generate Content"):
-        with st.spinner("AI is working..."):
-            prompt = f"Write marketing copy for {product} targeting {audience}."
-            response = client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[{"role": "user", "content": prompt}]
-            )
-            st.session_state.text = response.choices[0].message.content
-
-with col2:
-    st.subheader("📤 Export to Drive")
-    if "text" in st.session_state:
-        edited_text = st.text_area("Final Copy", st.session_state.text, height=300)
-        filename = st.text_input("Save As", value="marketing_copy.txt")
-
-        if st.button("🚀 Upload"):
-            try:
-                fid, fname = upload_file_to_drive(filename, edited_text)
-                st.success(f"✅ Uploaded! ID: {fid}")
-                st.balloons()
-            except Exception as e:
-                st.error(f"Error: {e}")
-    else:
-        st.info("Waiting for content generation...")
-        
+if st.button("🚀 Upload to My Drive"):
+    if text_data:
+        try:
+            file_id = upload_to_drive(creds, file_name, text_data)
+            st.success(f"File uploaded! ID: {file_id}")
+        except Exception as e:
+            st.error(f"Upload failed: {e}")
+            
