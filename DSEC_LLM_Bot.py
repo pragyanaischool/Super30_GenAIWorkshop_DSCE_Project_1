@@ -7,11 +7,15 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 
-# ---------------- CONFIG ----------------
+# --------------------------------------------------
+# CONFIG
+# --------------------------------------------------
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 REDIRECT_URI = st.secrets["google_oauth"]["redirect_uri"]
 
-# ---------------- OAUTH ----------------
+# --------------------------------------------------
+# GOOGLE OAUTH FLOW
+# --------------------------------------------------
 def get_flow():
     client_config = {
         "web": {
@@ -28,14 +32,14 @@ def get_flow():
         redirect_uri=REDIRECT_URI,
     )
 
-def drive_service():
-    creds = Credentials(**st.session_state["creds"])
+def get_drive_service():
+    creds = Credentials(**st.session_state["google_creds"])
     return build("drive", "v3", credentials=creds)
 
-def upload_to_drive(filename, text):
-    service = drive_service()
+def upload_to_drive(filename, content):
+    service = get_drive_service()
     media = MediaIoBaseUpload(
-        io.BytesIO(text.encode("utf-8")),
+        io.BytesIO(content.encode("utf-8")),
         mimetype="text/plain",
         resumable=True,
     )
@@ -46,28 +50,33 @@ def upload_to_drive(filename, text):
     ).execute()
     return file["name"]
 
-# ---------------- APP ----------------
-st.set_page_config("PragyanAI – Streamlit OAuth App", layout="wide")
-st.title("📢 PragyanAI – Streamlit Google OAuth App")
+# --------------------------------------------------
+# STREAMLIT UI
+# --------------------------------------------------
+st.set_page_config("PragyanAI – Streamlit OAuth", layout="wide")
+st.title("📢 PragyanAI – Google OAuth Streamlit App")
 
 client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
-# ---------------- LOGIN ----------------
-if "creds" not in st.session_state:
+# --------------------------------------------------
+# AUTHENTICATION
+# --------------------------------------------------
+if "google_creds" not in st.session_state:
     flow = get_flow()
 
-    # Google redirects back with ?code=
     if "code" in st.query_params:
         flow.fetch_token(code=st.query_params["code"])
-        c = flow.credentials
-        st.session_state["creds"] = {
-            "token": c.token,
-            "refresh_token": c.refresh_token,
-            "token_uri": c.token_uri,
-            "client_id": c.client_id,
-            "client_secret": c.client_secret,
-            "scopes": c.scopes,
+        creds = flow.credentials
+
+        st.session_state["google_creds"] = {
+            "token": creds.token,
+            "refresh_token": creds.refresh_token,
+            "token_uri": creds.token_uri,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "scopes": creds.scopes,
         }
+
         st.query_params.clear()
         st.rerun()
 
@@ -79,9 +88,11 @@ if "creds" not in st.session_state:
     st.link_button("🔑 Sign in with Google", auth_url)
     st.stop()
 
-# ---------------- LOGGED IN ----------------
+# --------------------------------------------------
+# LOGGED-IN UI
+# --------------------------------------------------
 with st.sidebar:
-    st.success("✅ Google Login Successful")
+    st.success("✅ Logged in with Google")
     if st.button("🚪 Logout"):
         st.session_state.clear()
         st.rerun()
@@ -104,12 +115,13 @@ with col1:
 with col2:
     st.subheader("📤 Upload to Google Drive")
     if "text" in st.session_state:
-        final_text = st.text_area("Content", st.session_state.text, height=280)
+        text = st.text_area("Content", st.session_state.text, height=280)
         filename = st.text_input("Filename", "marketing_copy.txt")
 
         if st.button("Upload"):
-            name = upload_to_drive(filename, final_text)
+            name = upload_to_drive(filename, text)
             st.success(f"✅ Uploaded: {name}")
             st.balloons()
     else:
         st.info("Generate content first")
+
